@@ -11,7 +11,13 @@ Spectrum eval_op::operator()(const DisneyDiffuse &bsdf) const {
     }
 
     // Homework 1: implement this!
-    return make_zero_spectrum();
+    Real roughness = eval(
+        bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
+    Vector3 h = (dir_in + dir_out)/length((dir_in + dir_out));
+    Real F_D90 = (0.5 + 2 * roughness * dot(h, dir_out)*dot(h, dir_out));
+    Real FD = (1.0 + (F_D90-1)*(1 - (pow(dot(frame.n,dir_out),5))));
+    //Spectrum f_base_diffuse = bsdf.base_color * 
+    return FD * eval(bsdf.base_color, vertex.uv, vertex.uv_screen_size, texture_pool) / c_PI;
 }
 
 Real pdf_sample_bsdf_op::operator()(const DisneyDiffuse &bsdf) const {
@@ -27,7 +33,8 @@ Real pdf_sample_bsdf_op::operator()(const DisneyDiffuse &bsdf) const {
     }
     
     // Homework 1: implement this!
-    return Real(0);
+    // Importance sample the hemisphere
+    return fmax(dot(frame.n, dir_out), Real(0)) / c_PI;
 }
 
 std::optional<BSDFSampleRecord> sample_bsdf_op::operator()(const DisneyDiffuse &bsdf) const {
@@ -42,7 +49,12 @@ std::optional<BSDFSampleRecord> sample_bsdf_op::operator()(const DisneyDiffuse &
     }
     
     // Homework 1: implement this!
-    return {};
+        Real roughness = eval(
+        bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
+
+    return BSDFSampleRecord{
+        to_world(frame, sample_cos_hemisphere(rnd_param_uv)),
+        Real(0) /* eta */, roughness /* roughness */};
 }
 
 TextureSpectrum get_texture_op::operator()(const DisneyDiffuse &bsdf) const {
