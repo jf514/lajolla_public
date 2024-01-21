@@ -1,12 +1,36 @@
 Real FD_90(const Vector3 &dir_out, const Vector3& h, Real roughness){
-    Real F_D90 = (0.5 + 2 * roughness * dot(h, dir_out)*dot(h, dir_out));
+    Real F_D90 = (0.5 + 2 * roughness * pow(dot(h, dir_out),2));
     return F_D90;
 } 
 
-Real FD(const Vector3 &norm, const Vector3 &dir, const Vector3 &dir_out, const Vector3& h, Real roughness){
+Real FD(const Vector3 &norm, 
+    const Vector3 &dir, 
+    const Vector3 &dir_out, 
+    const Vector3& h, 
+    Real roughness){
     Real FD90 = FD_90(dir_out, h, roughness);
     Real FD = (1. + (FD90 - 1.)*(1. - pow(fabs(dot(norm, dir)),5)));
     return FD;
+}
+
+Real FSS90(const Vector3& dir_out, const Vector3& h, Real roughness){
+    return roughness * pow(dot(h, dir_out),2);
+}
+
+Real FSS(const Vector3& norm, const Vector3& dir, 
+    const Vector3& dir_out, const Vector3& h, Real roughness){
+        Real FSS_90 = FSS90(dir_out, h, roughness);
+        Real FSS = (1 + (FSS_90 - 1) * (1 - pow(dot(norm, dir),5)));
+        return FSS;
+}
+
+Real FSS_Combined(const Vector3& norm, const Vector3& dir_in, const Vector3& dir_out,
+    const Vector3& h, Real roughness){
+        Real FSS_in = FSS(norm, dir_in, dir_out, h, roughness);
+        Real FSS_out = FSS(norm, dir_out, dir_out, h, roughness);
+        Real omega_term = (1./(fabs(dot(norm, dir_in) + fabs(dot(norm, dir_in))))); 
+        Real fac = (FSS_in * FSS_out*(omega_term - 0.5)+0.5)*fabs(dot(norm,dir_out));
+        return fac;
 }
 
 Spectrum eval_op::operator()(const DisneyDiffuse &bsdf) const {
@@ -25,28 +49,40 @@ Spectrum eval_op::operator()(const DisneyDiffuse &bsdf) const {
     //std::cout << "dir_in = " << length(dir_in) << "\n";
     //std::cout << "dir_out = " << length(dir_out) << "\n";
 
+    // Base diffuse
     Real roughness = eval(
         bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
         
-    Vector3 h = (dir_in + dir_out)/length((dir_in + dir_out));
+    Vector3 h = normalize(dir_in + dir_out);
     Real FD_in = FD(frame.n, dir_in, dir_out, h, roughness);
     Real FD_out = FD(frame.n, dir_out, dir_out, h, roughness);
     
     //Spectrum f_base_diffuse = bsdf.base_color * 
     //std::cout << "FD = " << FD << " \n";
+
+    Real f_base_diffuse = (FD_in * FD_out/c_PI) * 
+        fabs(dot(frame.n, dir_out));
+
+    // Subsurface
+    Real FSS_comb = FSS_Combined(frame.n, dir_in, dir_out, h, roughness);
+    Real f_sub_surf = (1.25/c_PI)*FSS_comb; 
+   
+    Real subsurface = eval(
+        bsdf.subsurface, 
+        vertex.uv, 
+        vertex.uv_screen_size,
+        texture_pool
+    );
+
     Vector3 baseColor = eval(
-            bsdf.base_color, 
-            vertex.uv, 
-            vertex.uv_screen_size, 
-            texture_pool);
+        bsdf.base_color, 
+        vertex.uv, 
+        vertex.uv_screen_size, 
+        texture_pool);
+    //subsurface = 0.0;
+    Real diffuse = (1-subsurface)*f_base_diffuse + subsurface*f_sub_surf;
 
-    Real fac = (FD_in * FD_out/c_PI) * 
-        fabs(dot(h, dir_out));
-
-    //if(fac > 1.0)
-    //    std::cout << "fac = " << fac << "\n";
-
-    return fac * baseColor;
+    return diffuse * baseColor;
 }
 
 Real pdf_sample_bsdf_op::operator()(const DisneyDiffuse &bsdf) const {
