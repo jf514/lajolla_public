@@ -9,7 +9,7 @@ Real FD(const Vector3 &norm,
     const Vector3& h, 
     Real roughness){
     Real FD90 = FD_90(dir_out, h, roughness);
-    Real FD = (1. + (FD90 - 1.)*(1. - pow(fabs(dot(norm, dir)),5)));
+    Real FD = (1. + (FD90 - 1.)*pow(1. - fabs(dot(norm, dir)),5));
     return FD;
 }
 

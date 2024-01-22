@@ -20,15 +20,15 @@
 
  		<bsdf type="disneydiffuse">
 			<rgb name="baseColor" value="0.5 0.5 0.5"/>
-			<float name="roughness" value="1.0"/>
-			<float name="subsurface" value="0.0"/>
+			<float name="roughness" value=".5"/>
+			<float name="subsurface" value="0.5"/>
 		</bsdf>
 
-<!-- 		<bsdf type="disneymetal">
+ 		<bsdf type="disneymetal">
 			<rgb name="baseColor" value="0.5 0.5 0.5"/>
 			<float name="roughness" value="0.2"/>
 			<float name="anisotropic" value="0.5"/>
-		</bsdf> -->
+		</bsdf>
 
 <!-- 		<bsdf type="disneyclearcoat">
 			<float name="clearcoatGloss" value="0.5"/>
