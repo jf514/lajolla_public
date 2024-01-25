@@ -5,8 +5,11 @@ Vector3 compute_h(const Vector3& dir_in, const Vector3& dir_out){
     return normalize(dir_in+dir_out);
 }
 
-Vector3 calculateFresnel(Vector3 baseColor, const Vector3& h, const Vector3& dir_out) {
-    return baseColor + (Vector3{1.0, 1.0, 1.0} - baseColor) * pow(1.0f - dot(h, dir_out), 5.0f);
+Vector3 calculateFM(const Vector3& baseColor, const Vector3& h, const Vector3& dir_out) {
+    Real temp = 1.0f - fabs(dot(h, dir_out));
+    temp = max(temp, Real(0));
+    Real schlick =  pow(temp, 5.0);
+    return baseColor + (Vector3{1.0, 1.0, 1.0} - baseColor) * schlick;
 }
 
 float calculateD(float alphaX, float alphaY, const Vector3& hl) {
@@ -55,7 +58,7 @@ Spectrum eval_op::operator()(const DisneyMetal &bsdf) const {
         vertex.uv_screen_size, 
         texture_pool);
 
-    Vector3 FM = calculateFresnel(baseColor, h, dir_out);
+    Vector3 FM = calculateFM(baseColor, h, dir_out);
 
     Real anisotropic = eval(
         bsdf.anisotropic, vertex.uv, vertex.uv_screen_size, texture_pool);
@@ -65,14 +68,16 @@ Spectrum eval_op::operator()(const DisneyMetal &bsdf) const {
 
     Real aspect = sqrt(1.0f - 0.9f * anisotropic);
 
-    Real alphaMin = 0.0001f;
+    Real alphaMin = 0.000001f;
     Real alphaX = std::max(alphaMin, pow(roughness, 2.0f) / aspect);
     Real alphaY = std::max(alphaMin, pow(roughness, 2.0f) * aspect);
     Vector3 hl = to_local(frame, h);
 
     Real DM = calculateD(alphaX, alphaY, hl);
 
-    Real GM = calculateGM(dir_in, dir_out, alphaX, alphaY);
+    Vector3 dir_in_l = to_local(frame, dir_in);
+    Vector3 dir_out_l = to_local(frame, dir_out);
+    Real GM = calculateGM(dir_in_l, dir_out_l, alphaX, alphaY);
 
     Vector3 res = (0.25/fabs(dot(frame.n, dir_in))) * DM * GM * FM;
 
@@ -80,6 +85,7 @@ Spectrum eval_op::operator()(const DisneyMetal &bsdf) const {
 }
 
 Real pdf_sample_bsdf_op::operator()(const DisneyMetal &bsdf) const {
+
     if (dot(vertex.geometric_normal, dir_in) < 0 ||
             dot(vertex.geometric_normal, dir_out) < 0) {
         // No light below the surface
@@ -107,6 +113,7 @@ Real pdf_sample_bsdf_op::operator()(const DisneyMetal &bsdf) const {
     // if (lS + lR <= 0) {
     //     return 0;
     // }
+    Vector3 h = compute_h(dir_in, dir_out);
     Real roughness = eval(bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
     // Clamp roughness to avoid numerical issues.
     roughness = std::clamp(roughness, Real(0.01), Real(1));
@@ -117,10 +124,29 @@ Real pdf_sample_bsdf_op::operator()(const DisneyMetal &bsdf) const {
     // "Sampling the GGX Distribution of Visible Normals"
     // https://jcgt.org/published/0007/04/01/
     // this importance samples smith_masking(cos_theta_in) * GTR2(cos_theta_h, roughness) * cos_theta_out
-    Real G = smith_masking_gtr2(to_local(frame, dir_in), roughness);
-    Real D = GTR2(n_dot_h, roughness);
+    //Real G = calculateGM(dir_in, dir_out, alphaX, alphaY);
+    //Real D = GTR2(n_dot_h, roughness);
+
+    Real anisotropic = eval(
+        bsdf.anisotropic, vertex.uv, vertex.uv_screen_size, texture_pool);
+
+    Real aspect = sqrt(1.0f - 0.9f * anisotropic);
+
+
+    Real alphaMin = 0.000001f;
+    Real alphaX = std::max(alphaMin, pow(roughness, 2.0f) / aspect);
+    Real alphaY = std::max(alphaMin, pow(roughness, 2.0f) * aspect);
+    Vector3 hl = to_local(frame, h);
+
+    Real DM = calculateD(alphaX, alphaY, hl);
+
+    Vector3 dir_in_l = to_local(frame, dir_in);
+    Vector3 dir_out_l = to_local(frame, dir_out);
+    Real GM = calculateGM(dir_in_l, dir_out_l, alphaX, alphaY);
+
+
     // (4 * cos_theta_v) is the Jacobian of the reflectiokn
-    spec_prob *= (G * D) / (4 * n_dot_in);
+    spec_prob *= (GM * DM) / (4 * n_dot_in);
     // For the diffuse lobe, we importance sample cos_theta_out
     diff_prob *= n_dot_out / c_PI;
     return spec_prob + diff_prob;
@@ -138,45 +164,27 @@ std::optional<BSDFSampleRecord>
         frame = -frame;
     }
 
-    // // We use the reflectance to choose between sampling the dielectric or diffuse layer.
-    // Spectrum Ks = eval(
-    //     bsdf.specular_reflectance, vertex.uv, vertex.uv_screen_size, texture_pool);
-    // Spectrum Kd = eval(
-    //     bsdf.diffuse_reflectance, vertex.uv, vertex.uv_screen_size, texture_pool);
-    // Real lS = luminance(Ks), lR = luminance(Kd);
-    // if (lS + lR <= 0) {
-    //     return {};
-    // }
-    // Real spec_prob = lS / (lS + lR);
-    if (1 /*rnd_param_w < spec_prob*/) {
-        // Sample from the specular lobe.
-
-        // Convert the incoming direction to local coordinates
-        Vector3 local_dir_in = to_local(frame, dir_in);
-        Real roughness = eval(
-            bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
-        // Clamp roughness to avoid numerical issues.
-        roughness = std::clamp(roughness, Real(0.01), Real(1));
-        Real alpha = roughness * roughness;
-        Vector3 local_micro_normal =
-            sample_visible_normals(local_dir_in, alpha, rnd_param_uv);
-        
-        // Transform the micro normal to world space
-        Vector3 half_vector = to_world(frame, local_micro_normal);
-        // Reflect over the world space normal
-        Vector3 reflected = normalize(-dir_in + 2 * dot(dir_in, half_vector) * half_vector);
-        return BSDFSampleRecord{
-            reflected,
-            Real(0) /* eta */, roughness /* roughness */
-        };
-    } else {
-        // Lambertian sampling
-        return BSDFSampleRecord{
-            to_world(frame, sample_cos_hemisphere(rnd_param_uv)),
-            Real(0) /* eta */, Real(1) /* roughness */};
-    }
+    // Sample from the specular lobe.
+    // Convert the incoming direction to local coordinates
+    Vector3 local_dir_in = to_local(frame, dir_in);
+    Real roughness = eval(
+        bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
+    // Clamp roughness to avoid numerical issues.
+    roughness = std::clamp(roughness, Real(0.01), Real(1));
+    Real alpha = roughness * roughness;
+    Vector3 local_micro_normal =
+        sample_visible_normals(local_dir_in, alpha, rnd_param_uv);
+    
+    // Transform the micro normal to world space
+    Vector3 half_vector = to_world(frame, local_micro_normal);
+    // Reflect over the world space normal
+    Vector3 reflected = normalize(-dir_in + 2 * dot(dir_in, half_vector) * half_vector);
+    return BSDFSampleRecord{
+        reflected,
+        Real(0) /* eta */, roughness /* roughness */
+    };
+ 
 }
-
 
 TextureSpectrum get_texture_op::operator()(const DisneyMetal &bsdf) const {
     return bsdf.base_color;

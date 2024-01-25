@@ -14,13 +14,16 @@ Real FD(const Vector3 &norm,
 }
 
 Real FSS90(const Vector3& dir_out, const Vector3& h, Real roughness){
-    return roughness * pow(dot(h, dir_out),2);
+    return roughness * pow(fabs(dot(h, dir_out)),2);
 }
 
 Real FSS(const Vector3& norm, const Vector3& dir, 
     const Vector3& dir_out, const Vector3& h, Real roughness){
         Real FSS_90 = FSS90(dir_out, h, roughness);
-        Real FSS = (1 + (FSS_90 - 1) * (1 - pow(dot(norm, dir),5)));
+        Real FSS = (1 + 
+                        (FSS_90 - 1) * 
+                        (pow( max(1 - dot(norm, dir),Real(0)), 5))
+                    );
         return FSS;
 }
 
@@ -28,7 +31,7 @@ Real FSS_Combined(const Vector3& norm, const Vector3& dir_in, const Vector3& dir
     const Vector3& h, Real roughness){
         Real FSS_in = FSS(norm, dir_in, dir_out, h, roughness);
         Real FSS_out = FSS(norm, dir_out, dir_out, h, roughness);
-        Real omega_term = (1./(fabs(dot(norm, dir_in) + fabs(dot(norm, dir_in))))); 
+        Real omega_term = (1./(fabs(dot(norm, dir_in)) + fabs(dot(norm, dir_out)))); 
         Real fac = (FSS_in * FSS_out*(omega_term - 0.5)+0.5)*fabs(dot(norm,dir_out));
         return fac;
 }
@@ -45,10 +48,6 @@ Spectrum eval_op::operator()(const DisneyDiffuse &bsdf) const {
         frame = -frame;
     }
 
-    // Homework 1: implement this!
-    //std::cout << "dir_in = " << length(dir_in) << "\n";
-    //std::cout << "dir_out = " << length(dir_out) << "\n";
-
     // Base diffuse
     Real roughness = eval(
         bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
@@ -57,9 +56,6 @@ Spectrum eval_op::operator()(const DisneyDiffuse &bsdf) const {
     Real FD_in = FD(frame.n, dir_in, dir_out, h, roughness);
     Real FD_out = FD(frame.n, dir_out, dir_out, h, roughness);
     
-    //Spectrum f_base_diffuse = bsdf.base_color * 
-    //std::cout << "FD = " << FD << " \n";
-
     Real f_base_diffuse = (FD_in * FD_out/c_PI) * 
         fabs(dot(frame.n, dir_out));
 
@@ -79,7 +75,7 @@ Spectrum eval_op::operator()(const DisneyDiffuse &bsdf) const {
         vertex.uv, 
         vertex.uv_screen_size, 
         texture_pool);
-    //subsurface = 0.0;
+
     Real diffuse = (1-subsurface)*f_base_diffuse + subsurface*f_sub_surf;
 
     return diffuse * baseColor;
