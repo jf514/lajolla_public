@@ -94,14 +94,30 @@ Real pdf_sample_bsdf_op::operator()(const DisneyClearcoat &bsdf) const {
     Real hzl = to_local(frame, h).z;
     Real Dc = calculateDc(alpha_g, hzl);
 
-    //Real Gc = calculateGMCC(dir_in, dir_out, 0.25, 0.25);
-    //Real Fc = calculateFc(h, dir_out);
+    Real Gc = calculateGMCC(dir_in, dir_out, 0.25, 0.25);
+    Real Fc = calculateFc(h, dir_out);
 
-    Real res = (0.25/fabs(dot(frame.n, dir_in))) * Dc * fabs(dot(frame.n, h));
+    Real res = (0.25/fabs(dot(frame.n, dir_in))) * Dc * fabs(dot(vertex.geometric_normal, h));
 
     // For Lambertian, we importance sample the cosine hemisphere domain.
     return res;
 }
+
+// Real pdf_sample_bsdf_op::operator()(const DisneyClearcoat &bsdf) const {
+//     if (dot(vertex.geometric_normal, dir_in) < 0 ||
+//             dot(vertex.geometric_normal, dir_out) < 0) {
+//         // No light below the surface
+//         return Real(0);
+//     }
+//     // Flip the shading frame if it is inconsistent with the geometry normal
+//     Frame frame = vertex.shading_frame;
+//     if (dot(frame.n, dir_in) < 0) {
+//         frame = -frame;
+//     }
+
+//     // For Lambertian, we importance sample the cosine hemisphere domain.
+//     return fmax(dot(frame.n, dir_out), Real(0)) / c_PI;
+// }
 
 std::optional<BSDFSampleRecord> sample_bsdf_op::operator()(const DisneyClearcoat &bsdf) const {
     // For Lambertian, we importance sample the cosine hemisphere domain.
@@ -129,13 +145,30 @@ std::optional<BSDFSampleRecord> sample_bsdf_op::operator()(const DisneyClearcoat
     Real hly = sin(hel)*sin(hazm);
     Real hlz = cos(hel);
     Vector3 hl{hlx, hly, hlz};
-    //hl = to_world(frame, hl);
+    hl = to_world(frame, hl);
     Vector3 reflected = normalize(-dir_in + 2. * dot(dir_in, hl)*hl);
 
     return BSDFSampleRecord{
         reflected,
         Real(0) /* eta */, Real(1) /* roughness */};
 }
+
+// std::optional<BSDFSampleRecord> sample_bsdf_op::operator()(const DisneyClearcoat &bsdf) const {
+//     // For Lambertian, we importance sample the cosine hemisphere domain.
+//     if (dot(vertex.geometric_normal, dir_in) < 0) {
+//         // Incoming direction is below the surface.
+//         return {};
+//     }
+//     // Flip the shading frame if it is inconsistent with the geometry normal
+//     Frame frame = vertex.shading_frame;
+//     if (dot(frame.n, dir_in) < 0) {
+//         frame = -frame;
+//     }
+
+//     return BSDFSampleRecord{
+//         to_world(frame, sample_cos_hemisphere(rnd_param_uv)),
+//         Real(0) /* eta */, Real(1) /* roughness */};
+// }
 
 TextureSpectrum get_texture_op::operator()(const DisneyClearcoat &bsdf) const {
     return make_constant_spectrum_texture(make_zero_spectrum());
