@@ -21,16 +21,12 @@
 	<bsdf type="diffuse" id="__diffmat">
 		<rgb name="reflectance" value="0.18 0.18 0.18"/>
 	</bsdf>
+	
+	<shape type="sphere">
+		<point name="center" x="0" y="0" z="-10"/>
+		<!-- <point name="center" x="10" y="0" z="0"/> -->
+		<float name="radius" value="0.1"/>
 
-	<shape type="serialized" id="Shell0">
-		<string name="filename" value="../matpreview/matpreview.serialized"/>
-		<integer name="shapeIndex" value="2"/>
-		<transform name="toWorld">
-			<matrix value="0.614046 0.614047 0 -1.78814e-07 -0.614047 0.614046 0 2.08616e-07 0 0 0.868393 1.02569 0 0 0 1"/>
-			<scale x="0.5" y="0.5" z="0.5"/>
-			<translate z="0.01"/>
-			<translate x="-4" y="1"/>
-		</transform>
 
 		<bsdf type="disneybsdf">
 			<rgb name="baseColor" value="0.82 0.67 0.16"/>
@@ -49,7 +45,7 @@
 		</bsdf>
 	</shape>
 
-	
+
 	<shape type="serialized" id="Interior11">
 		<string name="filename" value="../matpreview/matpreview.serialized"/>
 		<integer name="shapeIndex" value="1"/>
@@ -84,7 +80,7 @@
 		</transform>
 
 		<sampler type="independent">
-			<integer name="sampleCount" value="256"/>
+			<integer name="sampleCount" value="128"/>
 		</sampler>
 
 		<film type="hdrfilm" id="film">
