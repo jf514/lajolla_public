@@ -78,10 +78,7 @@ Spectrum eval_op::operator()(const DisneyClearcoat &bsdf) const {
     return res2;
 }
 
-template<typename bsdf_type>
-Real pdf_cc(const bsdf_type& bsdf, const PathVertex& vertex, const TexturePool& texture_pool, 
-    Vector3 dir_in, 
-    Vector3 dir_out){
+Real pdf_sample_bsdf_op::operator()(const DisneyClearcoat &bsdf) const {
     if (dot(vertex.geometric_normal, dir_in) < 0 ||
             dot(vertex.geometric_normal, dir_out) < 0) {
         // No light below the surface
@@ -98,22 +95,18 @@ Real pdf_cc(const bsdf_type& bsdf, const PathVertex& vertex, const TexturePool& 
         bsdf.clearcoat_gloss, vertex.uv, vertex.uv_screen_size, texture_pool);
 
     Real alpha_g = (1-ccg)*0.1 + ccg*.001;
-
+    
     Vector3 h = normalize(dir_in + dir_out);
     Real hzl = to_local(frame, h).z;
     Real Dc = calculateDc(alpha_g, hzl);
 
-    //Real Gc = calculateGMCC(dir_in, dir_out, 0.25, 0.25);
-    //Real Fc = calculateFc(h, dir_out);
+    Real Gc = calculateGMCC(dir_in, dir_out, 0.25, 0.25);
+    Real Fc = calculateFc(h, dir_out);
 
     Real res = (0.25/fabs(dot(frame.n, dir_in))) * Dc * fabs(dot(vertex.geometric_normal, h));
 
     // For Lambertian, we importance sample the cosine hemisphere domain.
     return res;
-}
-
-Real pdf_sample_bsdf_op::operator()(const DisneyClearcoat &bsdf) const {
-    return pdf_cc<DisneyClearcoat>(bsdf, vertex, texture_pool, dir_in, dir_out);
 }
 
 // Real pdf_sample_bsdf_op::operator()(const DisneyClearcoat &bsdf) const {

@@ -8,6 +8,8 @@
 #include <thread>
 #include <vector>
 
+bool gdb = false;
+
 int main(int argc, char *argv[]) {
     if (argc <= 1) {
         std::cout << "[Usage] ./lajolla [-t num_threads] [-o output_file_name] filename.xml" << std::endl;
@@ -22,6 +24,8 @@ int main(int argc, char *argv[]) {
             num_threads = std::stoi(std::string(argv[++i]));
         } else if (std::string(argv[i]) == "-o") {
             outputfile = std::string(argv[++i]);
+        } else if (std::string(argv[i]) == "-d"){
+            gdb = true;
         } else {
             filenames.push_back(std::string(argv[i]));
         }

@@ -92,10 +92,7 @@ Spectrum eval_op::operator()(const DisneyDiffuse &bsdf) const {
     return res;
 }
 
-template<typename bsdf_type>
-Real pdf_diff(const bsdf_type& bsdf, const PathVertex& vertex, const TexturePool& texture_pool, 
-    Vector3 dir_in, 
-    Vector3 dir_out){
+Real pdf_sample_bsdf_op::operator()(const DisneyDiffuse &bsdf) const {
     if (dot(vertex.geometric_normal, dir_in) < 0 ||
             dot(vertex.geometric_normal, dir_out) < 0) {
         // No light below the surface
@@ -110,10 +107,6 @@ Real pdf_diff(const bsdf_type& bsdf, const PathVertex& vertex, const TexturePool
     // Homework 1: implement this!
     // Importance sample the hemisphere
     return fmax(dot(frame.n, dir_out), Real(0)) / c_PI;
-}
-
-Real pdf_sample_bsdf_op::operator()(const DisneyDiffuse &bsdf) const {
-    return pdf_diff<DisneyDiffuse>(bsdf, vertex, texture_pool, dir_in, dir_out);
 }
 
 std::optional<BSDFSampleRecord> sample_bsdf_op::operator()(const DisneyDiffuse &bsdf) const {

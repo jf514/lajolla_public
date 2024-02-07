@@ -84,11 +84,7 @@ Spectrum eval_op::operator()(const DisneyMetal &bsdf) const {
     return res;
 }
 
-template<typename bsdf_type>
-Real pdf_metal(const bsdf_type& bsdf, const PathVertex& vertex, 
-    const TexturePool& texture_pool, 
-    const Vector3& dir_in, 
-    const Vector3& dir_out){
+Real pdf_sample_bsdf_op::operator()(const DisneyMetal &bsdf) const {
 
     if (dot(vertex.geometric_normal, dir_in) < 0 ||
             dot(vertex.geometric_normal, dir_out) < 0) {
@@ -154,10 +150,6 @@ Real pdf_metal(const bsdf_type& bsdf, const PathVertex& vertex,
     // For the diffuse lobe, we importance sample cos_theta_out
     diff_prob *= n_dot_out / c_PI;
     return spec_prob + diff_prob;
-}
-
-Real pdf_sample_bsdf_op::operator()(const DisneyMetal &bsdf) const {
-    return pdf_metal<DisneyMetal>(bsdf, vertex, texture_pool, dir_in, dir_out);
 }
 
 std::optional<BSDFSampleRecord>
