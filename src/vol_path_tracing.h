@@ -1,4 +1,4 @@
-#pragma once
+//pragma once
 
 #include <sstream>
 
@@ -49,6 +49,26 @@ void printdb(const Ray& ray){
     printdb("ray.org", ray.org);
     printdb("ray.dir", ray.dir);
 }
+
+void printdb(const std::string& str, const Ray& ray){
+    if(!gdb)
+        return;
+
+    std::cout << str << "\n";
+    printdb(ray);
+}
+
+// void printdb(const std::string& st, const std::vector<Medium>& media){
+//     if(!gdb)
+//         return;
+
+//     std::unique_lock<std::mutex> lock(printMut);
+//     std::cout << st << "\n";
+//     for (const auto m : media){
+//         std::cout << m << "\n";
+//     }
+//     lock.unlock();
+// }
 
 Spectrum vol_path_tracing_1(const Scene &scene,
                             int x, int y, /* pixel coordinates */
@@ -136,15 +156,16 @@ Spectrum vol_path_tracing_2(const Scene &scene,
         Real light_w = next_pcg32_real<Real>(rng);
         Real shape_w = next_pcg32_real<Real>(rng);
         int light_id = sample_light(scene, light_w);
+        assert(light_id >= 0);
         //printdb("light id", light_id);
         const Light &light = scene.lights[light_id];
         PointAndNormal point_on_light =
             sample_point_on_light(light, p, light_uv, shape_w, scene);
 
         Real dist_to_p = distance(point_on_light.position, p);
-        Vector3 dir_light = normalize(point_on_light.position - p);
+        Vector3 dir_to_light = normalize(point_on_light.position - p);
 
-        Ray shadow_ray{p, dir_light,
+        Ray shadow_ray{p, dir_to_light,
                         get_shadow_epsilon(scene),
                         (1 - get_shadow_epsilon(scene)) *
                             distance(point_on_light.position, p)};
@@ -155,18 +176,18 @@ Spectrum vol_path_tracing_2(const Scene &scene,
             Real pdf = 1;
 
             // Phase
-            integrand *= eval(phase_func, dir_light, ray.dir);
-            //pdf *= pdf_sample_phase(phase_func, dir_light, ray.dir);
+            integrand *= eval(phase_func, dir_to_light, ray.dir);
+            //pdf *= pdf_sample_phase(phase_func, dir_to_light, ray.dir);
 
             // L_e
-            Spectrum Le = emission(light, -dir_light, Real(0), point_on_light, scene);
+            Spectrum Le = emission(light, -dir_to_light, Real(0), point_on_light, scene);
             Real L_pdf = light_pmf(scene, light_id) *
                     pdf_point_on_light(light, point_on_light, p, scene);
 
             integrand *= Le;
             pdf *= L_pdf;
 
-            Real fac = fabs(dot(dir_light, point_on_light.normal)) * 
+            Real fac = fabs(dot(dir_to_light, point_on_light.normal)) * 
                 std::exp(-sigma_t[0] * dist_to_p) / (dist_to_p * dist_to_p);
 
             Vector3 out = (transmittance / trans_pdf) * sigma_s * (integrand / pdf ) * fac;
@@ -351,7 +372,6 @@ Spectrum vol_path_tracing_3(const Scene &scene,
 
         // sample next direct & update path throughput
         if (scatter) {
-            // TODO: Get phase function
             PhaseFunction phase_func = get_phase_function(scene.media[current_medium_id]);
             Vector2 scatter_uv{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
             Vector3 next_dir = sample_phase_function(phase_func, -ray.dir, scatter_uv).value();
@@ -387,6 +407,136 @@ Spectrum vol_path_tracing_3(const Scene &scene,
     return radiance;
 }
 
+struct Sigma {
+    Real a;
+    Real s;
+    Real t;
+};
+
+Sigma get_sigma(const Scene& scene, int medium_id){
+    Sigma sigma;
+    if(medium_id != -1){
+        const Vector3 UNUSED{1,1,1};
+        sigma.s = get_sigma_s(scene.media[medium_id], UNUSED)[0];
+        sigma.a = get_sigma_a(scene.media[medium_id], UNUSED)[0];
+        sigma.t = sigma.a + sigma.s;
+    } else {
+        sigma.s = sigma.s = sigma.t = 0;
+    }
+    return sigma;
+}
+
+struct NEEResults {
+    Spectrum radiance = Spectrum(0,0,0);
+    Real pdf = 0;
+    int light_id = -1;
+};
+
+void CheckLight(const std::string& st, PathVertex& v, const Scene& scene){
+
+    int light_id = get_area_light_id(scene.shapes[v.shape_id]);
+    if(light_id == -1){
+        std::unique_lock<std::mutex> lock(printMut);
+        std::cout << "st";
+        lock.unlock();
+    }
+}
+
+NEEResults next_event_estimation(Vector3 p, const Scene& scene, int current_medium_id, 
+    int bounces, pcg32_state& rng) {
+    Vector3 nee_p_cache = p;
+    printdb("next_event");
+    // TODO: double check
+    Vector2 light_uv{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
+    Real light_w = next_pcg32_real<Real>(rng);
+    Real shape_w = next_pcg32_real<Real>(rng);
+    int light_id = sample_light(scene, light_w);
+    assert(light_id >= 0);
+    const Light &light = scene.lights[light_id];
+    PointAndNormal p_prime = sample_point_on_light(light, p, light_uv, shape_w, scene);
+    printdb("Nee point on light", p_prime.position);
+    Vector3 dir_to_light = normalize(p_prime.position - p);
+
+    // Compute transmittance to light. Skip through index-matching shapes.
+    Real T_light = 1;
+    int shadow_medium_id = current_medium_id;
+    int shadow_bounces = 0;
+    Real p_trans_dir = 1; // for multiple importance sampling
+    // TODO - double check
+    while (true) {
+        // TODO: - double check
+        Ray shadow_ray{p, p_prime.position, 
+                        get_shadow_epsilon(scene),
+                        (1 - get_shadow_epsilon(scene)) *
+                            distance(p_prime.position, p)};
+
+        std::optional<PathVertex> isect_ = intersect(scene, shadow_ray);
+        Real next_t = distance(p, p_prime.position);
+        if (isect_) {
+            next_t = distance(p, isect_->position);
+        }
+        // Account for the transmittance to next_t
+        if (shadow_medium_id != -1) {
+            // TODO - double check
+            Sigma sigma = get_sigma(scene, shadow_medium_id);
+            T_light *= exp(-sigma.t * next_t);
+            p_trans_dir *= exp(-sigma.t * next_t);
+        }
+        if (!isect_) {
+            // Nothing is blocking, we’re done
+            break;
+        } else {
+            // Something is blocking: is it an opaque surface?
+            if (isect_->material_id >= 0) {
+                // we’re blocked
+                return NEEResults{};
+            }
+            // otherwise, it’s an index-matching surface and
+            // we want to pass through -- this introduces
+            // one extra connection vertex
+            shadow_bounces += 1;
+            if (scene.options.max_depth != -1 && bounces + shadow_bounces + 1 >= scene.options.max_depth) {
+                // Reach the max no. of vertices
+                return NEEResults{};
+            }
+            // TODO: double check shadow ray is the right ray
+            shadow_medium_id = update_medium(*isect_, shadow_ray, shadow_medium_id);
+            p = p + next_t * dir_to_light;
+        }
+        if (T_light > 0) {
+            // Compute T_light * G * rho * L & pdf_nee
+            // TODO:
+            PhaseFunction phase_func = get_phase_function(scene.media[shadow_medium_id]);
+            Vector2 scatter_uv{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
+            Vector3 next_dir = sample_phase_function(phase_func, dir_to_light, scatter_uv).value();
+            Spectrum rho = eval(phase_func, -shadow_ray.dir, next_dir);
+            Real dist_to_p_prime = distance(p, p_prime.position);
+            Real G = fabs(dot(dir_to_light, p_prime.normal)) /
+                (dist_to_p_prime * dist_to_p_prime);
+            
+            //CheckLight("CL 0", *isect_, scene);
+            Spectrum L = emission(light, -dir_to_light, Real(0), p_prime, scene);
+            //printdb("Nee L", L);
+            // ...
+            Real pdf_nee = pdf_point_on_light(light, p_prime, nee_p_cache, scene);
+            Spectrum contrib = T_light * G * rho * L / pdf_nee;
+            // Multiple importance sampling: it’s also possible
+            // that a phase function sampling + multiple exponential sampling
+            // will reach the light source.
+            // We also need to multiply with G to convert phase function PDF to area measure.
+            PhaseFunction phase_function;
+            Real pdf_phase = pdf_sample_phase(phase_function, dir_to_light, p_prime.normal) * G * p_trans_dir;
+            // power heuristics
+            Real w = (pdf_nee * pdf_nee) / (pdf_nee * pdf_nee + pdf_phase * pdf_phase);
+            NEEResults nee_res;
+            nee_res.radiance = w*contrib;
+            nee_res.pdf = pdf_nee;
+            nee_res.light_id = light_id;
+            return nee_res;
+        }
+    }
+    return NEEResults();
+}
 
 // The fourth volumetric renderer: 
 // multiple monochromatic homogeneous volumes with multiple scattering
@@ -395,8 +545,217 @@ Spectrum vol_path_tracing_3(const Scene &scene,
 Spectrum vol_path_tracing_4(const Scene &scene,
                             int x, int y, /* pixel coordinates */
                             pcg32_state &rng) {
-    // Homework 2: implememt this!
-    return make_zero_spectrum();
+
+    //printdb("\n\n");
+    //printdb("************************");
+    //printdb("media size", scene.media.size());
+
+//    x = 220;
+//    y = 243;
+    int w = scene.camera.width, h = scene.camera.height;
+    Vector2 screen_pos((x + next_pcg32_real<Real>(rng)) / w,
+                       (y + next_pcg32_real<Real>(rng)) / h);
+    Ray ray = sample_primary(scene.camera, screen_pos);
+    RayDifferential ray_diff = RayDifferential{0,0};
+    //ray.dir = Vector3(0,0,1);
+    //printdb("Top Ray:");
+    //printdb(ray);
+
+    int current_medium_id = scene.camera.medium_id;
+    //printdb("cam medium", current_medium_id);
+    //printdb("Top sigma");
+    Sigma sigma = get_sigma(scene, current_medium_id);
+    //printdb("Top sigma = ", Vector3(sigma.a, sigma.s, sigma.t));
+
+    Spectrum current_path_throughput{1,1,1};
+    Spectrum radiance{0,0,0};
+    int bounces = 0;
+
+    Real dir_pdf = 1;
+    Vector3 nee_p_cache{0,0,0};
+    Real multi_trans_pdf = 1;
+    bool scatter = false;
+    bool never_scattered = true;
+    Real pdf_nee = 0; //??? Probably needs to be computed somewhere else ???
+    while (true) {
+        printdb("Bounce", bounces);
+        if(scatter){
+            // Debug note - we are making it here!
+            never_scattered = false;
+            printdb("setting never_scattered");
+        }
+        scatter = false;
+        std::optional<PathVertex> isect_ = intersect(scene, ray, ray_diff);
+
+        Real t_hit = infinity<Real>(); 
+        if(isect_.has_value()){
+            t_hit = dot(ray.dir, isect_->position - ray.org);
+            printdb("HIT");
+            printdb("Surf id ", isect_->shape_id);
+            printdb("current medium", current_medium_id);
+            printdb("here vtx", 0);
+            printdb("t_hit", t_hit);
+            //assert(false);
+        } 
+        // isect might not intersect a surface, but we might be in a volume
+        Spectrum transmittance{1,1,1};
+        Real trans_pdf = 1.0;
+        if (current_medium_id != -1) {
+            // sample t s.t. p(t) ~ exp(-sigma_t * t)
+            Sigma sigma = get_sigma(scene, current_medium_id);
+            // printdb("sigma = ", Vector3(sigma.a, sigma.s, sigma.t));
+            // printdb("check t_hit");
+            // printdb("t_hit", t_hit);
+            // printdb("hit loc", isect_->position);
+
+            Real u = next_pcg32_real<Real>(rng);
+            Real t = - std::log(1-u)/sigma.t;
+
+            // compute transmittance and trans_pdf
+
+            // if t < t_hit, set scatter = True
+            //t = t_hit;
+            if(t < t_hit){
+                // Debug note! We are making it here
+                printdb("**********");
+                printdb("x", x);
+                printdb("y", y);
+                printdb("current medium", current_medium_id);
+                transmittance *= std::exp(-sigma.t * t);
+                trans_pdf = sigma.t * std::exp(-sigma.t * t);
+                scatter = true;
+                printdb("ray0",ray);
+                ray.org = ray.org + (t * ray.dir);
+                printdb("ray1",ray);
+            }
+        } else if(isect_.has_value()) {
+            transmittance *= std::exp(-sigma.t * t_hit);
+            trans_pdf =  std::exp(-sigma.t * t_hit);
+            //trans_pdf = 1;
+            //printdb("trans_pdf", trans_pdf);
+            
+            Real epsilon = 0.001;
+            ray.org = ray.org + t_hit * ray.dir - epsilon * isect_->geometric_normal;
+            //printdb("ray.org", ray.org);
+        }
+        
+        multi_trans_pdf *= trans_pdf;
+        current_path_throughput *= (transmittance / trans_pdf);
+        // printdb("ctp", 0);
+        // printdb("curr_tp", current_path_throughput);
+        // printdb("trans", transmittance);
+        // printdb("trans_pdf", trans_pdf);
+
+        if (!scatter) {
+            // TODO: Double check this        
+            if(never_scattered){
+                // This is the only way we can see the light source, so
+                // we don’t need multiple importance sampling.
+                Vector3 Le_isect{0,0,0};
+                if (isect_ && is_light(scene.shapes[isect_->shape_id])) {
+                    //printdb("Hit light");
+                    //CheckLight("CL 1", *isect_, scene);
+                    Le_isect = emission(*isect_, -ray.dir, scene);
+                    //printdb("Le_isect", Le_isect);
+                }
+                radiance += current_path_throughput * Le_isect;
+                //printdb("hit - radiance", radiance);
+                //printdb("curr_tp", current_path_throughput);
+                //printdb("Le isect", Le_isect);
+            } else if(is_light(scene.shapes[isect_->shape_id])){
+                PointAndNormal light_point{isect_->position, isect_->geometric_normal};
+                //Need to account for next event estimation
+                // TODO:
+                //Note that pdf_nee needs to account for the path vertex that issued
+                //next event estimation potentially many bounces ago.
+                //The vertex position is stored in nee_p_cache.
+                // TODO:
+                const int light_id = get_area_light_id(scene.shapes[isect_->shape_id]);
+                const Light& light = scene.lights[light_id];
+                Real pdf_nee = pdf_point_on_light(light, light_point, nee_p_cache, scene);
+
+                //The PDF for sampling the light source using phase function sampling + transmittance sampling
+                //The directional sampling pdf was cached in dir_pdf in solid angle measure.
+                //The transmittance sampling pdf was cached in multi_trans_pdf.
+                // TODO
+                Real G = fabs(dot(-ray.dir, isect_->geometric_normal));
+                Real dir_pdf_ = dir_pdf * multi_trans_pdf * G;
+                // TODO which w???
+                Real w = (dir_pdf_ * dir_pdf_) / (dir_pdf_ * dir_pdf_ + pdf_nee * pdf_nee);
+                //current_path_throughput already accounts for transmittance.
+                // TODO - double check
+                //CheckLight("CL 2", *isect_, scene);
+                radiance += w * current_path_throughput * emission(*isect_, -ray.dir, scene);
+            }
+        }
+
+        if (bounces == scene.options.max_depth - 1 && scene.options.max_depth != -1) {
+            // reach maximum bounces
+            break;
+        }
+
+        if (!scatter && isect_) {
+            if (isect_->material_id == -1) {
+                // index-matching interface, skip through it
+                //printdb("Pre update medium sigma");
+                //printdb("sigma = ", Vector3(sigma_a[0], sigma_s[0], sigma_t[0]));
+                printdb("old medium id", current_medium_id);
+                current_medium_id = update_medium(*isect_, ray, current_medium_id);
+                printdb("new medium id", current_medium_id);
+                sigma = get_sigma(scene, current_medium_id);
+                // printdb("post-sig update");
+                // printdb("sigma = ", Vector3(sigma.a, sigma.s, sigma.t));
+
+                bounces += 1;
+ 
+                continue;
+            }
+        }
+
+        // sample next direct & update path throughput
+        if (scatter) {
+            PhaseFunction phase_func = get_phase_function(scene.media[current_medium_id]);
+            Vector2 scatter_uv{next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng)};
+            Vector3 next_dir = sample_phase_function(phase_func, -ray.dir, scatter_uv).value();
+            // update ray.dir
+            ray.dir = next_dir;
+            //printdb("scatter - next_dir", next_dir);
+            //printdb("scatter !!!!!");
+            //ray.dir = Vector3(0,0,1);
+            Real phase_pdf = pdf_sample_phase(phase_func,-ray.dir, next_dir);
+            current_path_throughput *= (eval(phase_func, -ray.dir, next_dir) / phase_pdf) * sigma.s;
+            dir_pdf *= phase_pdf;
+            Real w = (dir_pdf * dir_pdf) / (dir_pdf * dir_pdf + pdf_nee * pdf_nee);
+            NEEResults res = next_event_estimation(ray.org, scene, current_medium_id, bounces, rng);
+            if(res.light_id != -1){
+                radiance += w * res.radiance;
+                pdf_nee = res.pdf;
+            }
+            
+        } else {
+            // Hit a surface -- don’t need to deal with this yet
+            break;
+        }
+
+        // Russian roulette
+        Real rr_prob = 1;
+        if (bounces >= scene.options.rr_depth) {
+            //printdb("rr", scene.options.rr_depth);
+            rr_prob = std::min(current_path_throughput[0], 0.95);
+            if (next_pcg32_real<Real>(rng) > rr_prob) {
+                break;
+            } else {
+                current_path_throughput /= rr_prob;
+                //printdb("ctp",1);
+                //printdb("curr_tp", current_path_throughput);
+            }
+        }
+
+        bounces += 1;
+        //printdb("");
+    }
+    //printdb("radiance - final", radiance);
+    return radiance;
 }
 
 // The fifth volumetric renderer: 
